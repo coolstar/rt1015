@@ -30,6 +30,38 @@
 #define true 1
 #define false 0
 
+typedef enum {
+	CSAudioEndpointTypeDSP,
+	CSAudioEndpointTypeSpeaker,
+	CSAudioEndpointTypeHeadphone,
+	CSAudioEndpointTypeMicArray,
+	CSAudioEndpointTypeMicJack
+} CSAudioEndpointType;
+
+typedef enum {
+	CSAudioEndpointRegister,
+	CSAudioEndpointStart,
+	CSAudioEndpointStop,
+	CSAudioEndpointOverrideFormat
+} CSAudioEndpointRequest;
+
+typedef struct CSAUDIOFORMATOVERRIDE {
+	UINT16 channels;
+	UINT16 frequency;
+	UINT16 bitsPerSample;
+	UINT16 validBitsPerSample;
+	BOOLEAN force32BitOutputContainer;
+} CsAudioFormatOverride;
+
+typedef struct CSAUDIOARG {
+	UINT32 argSz;
+	CSAudioEndpointType endpointType;
+	CSAudioEndpointRequest endpointRequest;
+	union {
+		CsAudioFormatOverride formatOverride;
+	};
+} CsAudioArg, * PCsAudioArg;
+
 typedef struct _RT1015_CONTEXT
 {
 
@@ -43,6 +75,12 @@ typedef struct _RT1015_CONTEXT
 	INT32 UID;
 
 	BOOLEAN DevicePoweredOn;
+
+	WDFWORKITEM CSAudioWorkItem;
+	PCALLBACK_OBJECT CSAudioAPICallback;
+	PVOID CSAudioAPICallbackObj;
+
+	BOOLEAN CSAudioManaged;
 
 } RT1015_CONTEXT, *PRT1015_CONTEXT;
 
