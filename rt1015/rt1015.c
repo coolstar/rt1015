@@ -256,17 +256,6 @@ StopCodec(
 int CsAudioArg2 = 1;
 
 VOID
-CsAudioWorkItemFunc(
-	IN WDFWORKITEM  WorkItem
-)
-{
-	WDFDEVICE Device = (WDFDEVICE)WdfWorkItemGetParentObject(WorkItem);
-	PRT1015_CONTEXT pDevice = GetDeviceContext(Device);
-
-	StartCodec(pDevice);
-}
-
-VOID
 CSAudioRegisterEndpoint(
 	PRT1015_CONTEXT pDevice
 ) {
@@ -280,15 +269,13 @@ CSAudioRegisterEndpoint(
 
 VOID
 CsAudioCallbackFunction(
-	IN WDFWORKITEM  WorkItem,
+	IN PRT1015_CONTEXT pDevice,
 	CsAudioArg* arg,
 	PVOID Argument2
 ) {
-	if (!WorkItem) {
+	if (!pDevice) {
 		return;
 	}
-	WDFDEVICE Device = (WDFDEVICE)WdfWorkItemGetParentObject(WorkItem);
-	PRT1015_CONTEXT pDevice = GetDeviceContext(Device);
 
 	if (Argument2 == &CsAudioArg2) {
 		return;
@@ -307,11 +294,11 @@ CsAudioCallbackFunction(
 		return;
 	}
 
-	if (localArg.endpointRequest == CSAudioEndpointStop || localArg.endpointRequest == CSAudioEndpointStart) {
+	if (localArg.endpointRequest == CSAudioEndpointStop) {
 		StopCodec(pDevice);
 	}
 	if (localArg.endpointRequest == CSAudioEndpointStart) {
-		WdfWorkItemEnqueue(pDevice->CSAudioWorkItem);
+		StartCodec(pDevice);
 	}
 }
 
@@ -451,12 +438,6 @@ Status
 		pDevice->CSAudioAPICallbackObj = NULL;
 	}
 
-	if (pDevice->CSAudioWorkItem) {
-		WdfWorkItemFlush(pDevice->CSAudioWorkItem);
-		WdfObjectDelete(pDevice->CSAudioWorkItem);
-		pDevice->CSAudioWorkItem = NULL;
-	}
-
 	if (pDevice->CSAudioAPICallback) {
 		ObfDereferenceObject(pDevice->CSAudioAPICallback);
 		pDevice->CSAudioAPICallback = NULL;
@@ -494,7 +475,7 @@ OnSelfManagedIoInit(
 
 	pDevice->CSAudioAPICallbackObj = ExRegisterCallback(pDevice->CSAudioAPICallback,
 		CsAudioCallbackFunction,
-		pDevice->CSAudioWorkItem
+		pDevice
 	);
 	if (!pDevice->CSAudioAPICallbackObj) {
 
@@ -623,6 +604,14 @@ Rt1015EvtDeviceAdd(
 			"WdfDeviceCreate failed with status code 0x%x\n", status);
 
 		return status;
+	}
+
+	{
+		WDF_DEVICE_STATE deviceState;
+		WDF_DEVICE_STATE_INIT(&deviceState);
+
+		deviceState.NotDisableable = WdfFalse;
+		WdfDeviceSetDeviceState(device, &deviceState);
 	}
 
 	WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(&queueConfig, WdfIoQueueDispatchParallel);

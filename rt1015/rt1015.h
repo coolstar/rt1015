@@ -76,7 +76,6 @@ typedef struct _RT1015_CONTEXT
 
 	BOOLEAN DevicePoweredOn;
 
-	WDFWORKITEM CSAudioWorkItem;
 	PCALLBACK_OBJECT CSAudioAPICallback;
 	PVOID CSAudioAPICallbackObj;
 
