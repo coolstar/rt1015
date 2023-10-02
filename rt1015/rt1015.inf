@@ -46,6 +46,10 @@ rt1015.sys  = 1,,
 [Rt1015_Device.NT]
 CopyFiles=Drivers_Dir
 
+[Rt1015_Device.NT.HW]
+Include=pci.inf
+Needs=PciD3ColdSupported.HW
+
 [Drivers_Dir]
 rt1015.sys
 

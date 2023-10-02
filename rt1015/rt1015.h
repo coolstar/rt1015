@@ -80,6 +80,7 @@ typedef struct _RT1015_CONTEXT
 	PVOID CSAudioAPICallbackObj;
 
 	BOOLEAN CSAudioManaged;
+	BOOLEAN CSAudioRequestsOn;
 
 } RT1015_CONTEXT, *PRT1015_CONTEXT;
 
