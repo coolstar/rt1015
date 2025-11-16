@@ -200,7 +200,9 @@ StartCodec(
 		{RT1015_PWR9, 0xAA60},
 		{RT1015_SMART_BST_CTRL1, 0xe188},
 		{RT1015_PWR_STATE_CTRL, 0x02ee},
-		{RT1015_MONO_DYNA_CTRL, 0x0010}
+		{RT1015_MONO_DYNA_CTRL, 0x0010},
+		{RT1015_CLSD_INTERNAL8, 0x2028},
+		{RT1015_CLSD_INTERNAL9, 0x0140}
 	};
 
 	status = rt1015_reg_burstWrite(pDevice, regsCommon, sizeof(regsCommon) / sizeof(struct reg));
