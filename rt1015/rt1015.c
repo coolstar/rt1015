@@ -6,6 +6,8 @@
 static ULONG Rt1015DebugLevel = 100;
 static ULONG Rt1015DebugCatagories = DBG_INIT || DBG_PNP || DBG_IOCTL;
 
+NTSTATUS rt1015_update_reclock(PRT1015_CONTEXT pDevice);
+
 NTSTATUS
 DriverEntry(
 	__in PDRIVER_OBJECT  DriverObject,
@@ -63,6 +65,16 @@ static NTSTATUS rt1015_reg_read(PRT1015_CONTEXT pDevice, uint16_t reg, uint16_t*
 	NTSTATUS ret = SpbXferDataSynchronously(&pDevice->I2CContext, &reg_swap, sizeof(uint16_t), &data_swap, sizeof(uint16_t));
 	*data = RtlUshortByteSwap(data_swap);
 	return ret;
+}
+
+NTSTATUS rt1015_reg_update(PRT1015_CONTEXT pDevice, uint16_t reg, uint16_t mask, uint16_t val) {
+	uint16_t data;
+	NTSTATUS status = rt1015_reg_read(pDevice, reg, &data);
+	if (!NT_SUCCESS(status)) {
+		return status;
+	}
+	status = rt1015_reg_write(pDevice, reg, (data & ~mask) | (val & mask));
+	return status;
 }
 
 static NTSTATUS rt1015_reg_burstWrite(PRT1015_CONTEXT pDevice, struct reg* regs, int regCount) {
@@ -177,9 +189,12 @@ StartCodec(
 		return status;
 	}
 
-	
 	uint16_t val = 0;
-	rt1015_reg_read(pDevice, RT1015_DEVICE_ID, &val);
+	status = rt1015_reg_read(pDevice, RT1015_DEVICE_ID, &val);
+	if (!NT_SUCCESS(status)) {
+		DbgPrint("Failed to read device id\n");
+		return status;
+	}
 	if ((val != RT1015_DEVICE_ID_VAL) && (val != RT1015_DEVICE_ID_VAL2)) {
 		return STATUS_INVALID_DEVICE_STATE;
 	}
@@ -190,19 +205,23 @@ StartCodec(
 	// RT1015_SPK_DC_DETECT1
 
 	struct reg regsCommon[] = {
-		{RT1015_PLL1, 0x0816},
-		{RT1015_PLL2, 0x0004},
-		{RT1015_CLK_DET, 0x8800},
-		{RT1015_SIL_DET, 0x0143},
-		{RT1015_TDM_MASTER, 0x0000},
-		{RT1015_TDM1_4, 0x0101},
+		{RT1015_CLK_DET, 0x0000},
+
 		{RT1015_PWR4, 0x00B2},
-		{RT1015_PWR9, 0xAA60},
-		{RT1015_SMART_BST_CTRL1, 0xe188},
-		{RT1015_PWR_STATE_CTRL, 0x02ee},
-		{RT1015_MONO_DYNA_CTRL, 0x0010},
+
 		{RT1015_CLSD_INTERNAL8, 0x2028},
-		{RT1015_CLSD_INTERNAL9, 0x0140}
+		{RT1015_CLSD_INTERNAL9, 0x0140},
+
+		{RT1015_PWR_STATE_CTRL, 0x0008},
+		{RT1015_SYS_RST1, 0x05F5},
+		{RT1015_CLK_DET, 0x8000},
+
+		//Boost
+		{RT1015_PWR9, 0xAA60},
+		{RT1015_SYS_RST1, 0x05f7},
+		{RT1015_SYS_RST2, 0x0b0a},
+		{RT1015_PWR_STATE_CTRL, 0x008e},
+		{RT1015_MONO_DYNA_CTRL, 0x0010}
 	};
 
 	status = rt1015_reg_burstWrite(pDevice, regsCommon, sizeof(regsCommon) / sizeof(struct reg));
@@ -210,30 +229,25 @@ StartCodec(
 		return status;
 	}
 
+	if (!pDevice->ReclockRequested) {
+		pDevice->freq = 48000;
+		pDevice->bclk = pDevice->freq * 64;
+		pDevice->slotWidth = 16;
+	}
+
+	status = rt1015_update_reclock(pDevice);
+	if (!NT_SUCCESS(status)) {
+		return status;
+	}
+
 	if (pDevice->UID == 0) {
-		status = rt1015_reg_write(pDevice, RT1015_DUM_RW1, 0x0006);
-		if (!NT_SUCCESS(status)) {
-			return status;
-		}
 		status = rt1015_reg_write(pDevice, RT1015_PAD_DRV2, 0x004c); //don't need this
-		if (!NT_SUCCESS(status)) {
-			return status;
-		}
-		status = rt1015_reg_write(pDevice, RT1015_SPK_DC_DETECT1, 0x1c6d);
 		if (!NT_SUCCESS(status)) {
 			return status;
 		}
 	}
 	else if (pDevice->UID == 1) {
-		status = rt1015_reg_write(pDevice, RT1015_DUM_RW1, 0x0007);
-		if (!NT_SUCCESS(status)) {
-			return status;
-		}
 		status = rt1015_reg_write(pDevice, RT1015_PAD_DRV2, 0x005c);
-		if (!NT_SUCCESS(status)) {
-			return status;
-		}
-		status = rt1015_reg_write(pDevice, RT1015_SPK_DC_DETECT1, 0x1c6c);
 		if (!NT_SUCCESS(status)) {
 			return status;
 		}
@@ -267,6 +281,103 @@ CSAudioRegisterEndpoint(
 	arg.endpointType = CSAudioEndpointTypeSpeaker;
 	arg.endpointRequest = CSAudioEndpointRegister;
 	ExNotifyCallback(pDevice->CSAudioAPICallback, &arg, &CsAudioArg2);
+}
+
+#include "rl6231.h"
+
+NTSTATUS rt1015_set_clks(PRT1015_CONTEXT pDevice, uint32_t freq, uint32_t lrck, uint8_t tdm_width) {
+	int pre_div = rl6231_get_clk_info(freq, lrck);
+	uint16_t val_len;
+	if (pre_div < 0) {
+		Rt1015Print(DEBUG_LEVEL_ERROR, DBG_INIT,
+			"Unsupported clock rate\n");
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	Rt1015Print(DEBUG_LEVEL_ERROR, DBG_INIT,
+		"pre_div is %d\n", pre_div);
+
+	Rt1015Print(DEBUG_LEVEL_ERROR, DBG_INIT,
+		"lrck is %dHz and pre_div is %d\n",
+		lrck, pre_div);
+
+	switch (tdm_width) {
+	case 16:
+		val_len = RT1015_I2S_DL_16;
+		break;
+	case 20:
+		val_len = RT1015_I2S_DL_20;
+		break;
+	case 24:
+		val_len = RT1015_I2S_DL_24;
+		break;
+	case 8:
+		val_len = RT1015_I2S_DL_8;
+		break;
+	default:
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	NTSTATUS status = STATUS_SUCCESS;
+	status = rt1015_reg_update(pDevice, RT1015_TDM_MASTER,
+		RT1015_I2S_DL_MASK, val_len);
+	if (!NT_SUCCESS(status)) {
+		return status;
+	}
+	return rt1015_reg_update(pDevice, RT1015_CLK2,
+		RT1015_FS_PD_MASK, pre_div << RT1015_FS_PD_SFT);
+}
+
+NTSTATUS rt1015_set_pll(
+	PRT1015_CONTEXT pDevice, int source,
+	UINT32 freq_in, UINT32 freq_out
+) {
+	switch (source) {
+	case RT1015_PLL_S_MCLK:
+		rt1015_reg_update(pDevice, RT1015_CLK2,
+			RT1015_PLL_SEL_MASK, RT1015_PLL_SEL_PLL_SRC2);
+		break;
+
+	case RT1015_PLL_S_BCLK:
+		rt1015_reg_update(pDevice, RT1015_CLK2,
+			RT1015_PLL_SEL_MASK, RT1015_PLL_SEL_BCLK);
+		break;
+
+	default:
+		Rt1015Print(DEBUG_LEVEL_ERROR, DBG_INIT,
+			"Unknown PLL Source %d\n", source);
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	struct rl6231_pll_code pll_code;
+	NTSTATUS status = rl6231_pll_calc(freq_in, freq_out, &pll_code);
+	if (!NT_SUCCESS(status)) {
+		return status;
+	}
+
+	Rt1015Print(DEBUG_LEVEL_ERROR, DBG_INIT,
+		"bypass=%d m=%d n=%d k=%d\n",
+		pll_code.m_bp, (pll_code.m_bp ? 0 : pll_code.m_code),
+		pll_code.n_code, pll_code.k_code);
+
+	rt1015_reg_write(pDevice, RT1015_PLL1,
+		((pll_code.m_bp ? 0 : pll_code.m_code) << RT1015_PLL_M_SFT) |
+		(pll_code.m_bp << RT1015_PLL_M_BP_SFT) |
+		pll_code.n_code);
+	rt1015_reg_write(pDevice, RT1015_PLL2,
+		pll_code.k_code);
+
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS rt1015_update_reclock(PRT1015_CONTEXT pDevice) {
+	NTSTATUS status = STATUS_SUCCESS;
+	status = rt1015_set_clks(pDevice, pDevice->freq * 256, pDevice->freq, pDevice->slotWidth);
+	if (!NT_SUCCESS(status)) {
+		return status;
+	}
+	status = rt1015_set_pll(pDevice, RT1015_PLL_S_BCLK, pDevice->bclk, pDevice->freq * 256);
+	return status;
 }
 
 VOID
@@ -307,6 +418,21 @@ CsAudioCallbackFunction(
 			WdfDeviceStopIdle(pDevice->FxDevice, TRUE);
 			pDevice->CSAudioRequestsOn = TRUE;
 		}
+	}
+	if (localArg.endpointRequest == CSAudioEndpointI2SParameters &&
+		localArg.i2sParameters.version >= 1) {  //Supports version 1 or higher
+		UINT32 bclk = localArg.i2sParameters.bclk_rate;
+		UINT32 freq = localArg.i2sParameters.frequency;
+		UINT32 slotWidth = localArg.i2sParameters.valid_bits;
+
+		Rt1015Print(DEBUG_LEVEL_ERROR, DBG_INIT,
+			"Bclk: %d, Freq: %d, Width: %d\n", bclk, freq, slotWidth);
+		
+		pDevice->ReclockRequested = true;
+		pDevice->bclk = bclk;
+		pDevice->freq = freq;
+		pDevice->slotWidth = slotWidth;
+		rt1015_update_reclock(pDevice);
 	}
 }
 

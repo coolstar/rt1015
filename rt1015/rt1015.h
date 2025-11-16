@@ -42,7 +42,8 @@ typedef enum {
 	CSAudioEndpointRegister,
 	CSAudioEndpointStart,
 	CSAudioEndpointStop,
-	CSAudioEndpointOverrideFormat
+	CSAudioEndpointOverrideFormat,
+	CSAudioEndpointI2SParameters
 } CSAudioEndpointRequest;
 
 typedef struct CSAUDIOFORMATOVERRIDE {
@@ -53,12 +54,26 @@ typedef struct CSAUDIOFORMATOVERRIDE {
 	BOOLEAN force32BitOutputContainer;
 } CsAudioFormatOverride;
 
+typedef struct CSAUDIOI2SPARAMS {
+	UINT32 version;
+
+	UINT32 mclk;
+	UINT32 bclk_rate;
+	UINT32 frequency;
+	UINT32 tdm_slots;
+	UINT32 tdm_slot_width;
+	UINT32 rx_slots;
+	UINT32 tx_slots;
+	UINT32 valid_bits; //end of version 1
+} CsAudioI2SParameters;
+
 typedef struct CSAUDIOARG {
 	UINT32 argSz;
 	CSAudioEndpointType endpointType;
 	CSAudioEndpointRequest endpointRequest;
 	union {
 		CsAudioFormatOverride formatOverride;
+		CsAudioI2SParameters i2sParameters;
 	};
 } CsAudioArg, * PCsAudioArg;
 
@@ -82,6 +97,10 @@ typedef struct _RT1015_CONTEXT
 	BOOLEAN CSAudioManaged;
 	BOOLEAN CSAudioRequestsOn;
 
+	BOOLEAN ReclockRequested;
+	UINT32 bclk;
+	UINT32 freq;
+	UINT32 slotWidth;
 } RT1015_CONTEXT, *PRT1015_CONTEXT;
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(RT1015_CONTEXT, GetDeviceContext)
